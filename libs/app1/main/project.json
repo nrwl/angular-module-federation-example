@@ -1,0 +1,26 @@
+{
+  "projectType": "library",
+  "root": "libs/app1/main",
+  "sourceRoot": "libs/app1/main/src",
+  "prefix": "nx-mfe",
+  "targets": {
+    "test": {
+      "executor": "@nrwl/jest:jest",
+      "outputs": ["coverage/libs/app1/main"],
+      "options": {
+        "jestConfig": "libs/app1/main/jest.config.js",
+        "passWithNoTests": true
+      }
+    },
+    "lint": {
+      "executor": "@nrwl/linter:eslint",
+      "options": {
+        "lintFilePatterns": [
+          "libs/app1/main/src/**/*.ts",
+          "libs/app1/main/src/**/*.html"
+        ]
+      }
+    }
+  },
+  "tags": []
+}
