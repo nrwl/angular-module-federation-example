@@ -1,0 +1,5 @@
+
+
+
+1. React/Angular executors should use the language of MF (module federation), not MFE.
+2. Angular host should have the same serve target as React

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "projects": {
+    "app1": "apps/app1",
+    "app1-main": "libs/app1/main",
+    "app2": "apps/app2",
+    "app2-main": "libs/app2/main",
+    "shared-components": "libs/shared/components",
+    "shell": "apps/shell",
+    "shell-e2e": "apps/shell-e2e"
+  }
+}
