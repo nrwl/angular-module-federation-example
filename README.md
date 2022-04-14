@@ -1,98 +1,122 @@
-# NxMfe
+# Nx: Faster Angular Builds Using Module Federation
 
-This project was generated using [Nx](https://nx.dev).
+Building large Angular applications can take a long time. It's not uncommon to see 30+-minute builds in CI.
 
-<p style="text-align: center;"><img src="https://raw.githubusercontent.com/nrwl/nx/master/images/nx-logo.png" width="450"></p>
+Things contributing to the build time are:
 
-🔎 **Smart, Fast and Extensible Build System**
+1. Compilation: Compiling the Angular components and other TS sources.
+2. Linking: Bundling, tree-shaking, minification.
 
-## Quick Start & Documentation
+You could optimize the steps but at a certain scale there is only one way to make your CI consistently fast, and it is to distribute your builds. To do that you need to split you monolithic build into multiple independent build processes.
 
-[Nx Documentation](https://nx.dev/angular)
+There are two ways to make the build incremental:
 
-[10-minute video showing all Nx features](https://nx.dev/getting-started/intro)
+1. Make libraries buildable (aka horizontal incrementality).
+2. Use module federation to split your app into several independently buildable apps/slices (aka vertical incrementality).
 
-[Interactive Tutorial](https://nx.dev/tutorial/01-create-application)
+This repo shows how to use both.
 
-## Adding capabilities to your workspace
+## Example
 
-Nx supports many plugins which add capabilities for developing different types of applications and different tools.
+This repo has an applicationi called `shell`. It loads two separate slices (`app1` and `app2`) using module federation. The `app1` app depends on the `app1-main` lib. The `app2` app depends on the `app2-main` lib. The `app1-main` and `app2-main` libs depend on `shared-components`.
 
-These capabilities include generating applications, libraries, etc as well as the devtools to test, and build projects as well.
+![project graph](./readme-assets/graph.png)
 
-Below are our core plugins:
+### Serving the application
 
-- [Angular](https://angular.io)
-  - `ng add @nrwl/angular`
-- [React](https://reactjs.org)
-  - `ng add @nrwl/react`
-- Web (no framework frontends)
-  - `ng add @nrwl/web`
-- [Nest](https://nestjs.com)
-  - `ng add @nrwl/nest`
-- [Express](https://expressjs.com)
-  - `ng add @nrwl/express`
-- [Node](https://nodejs.org)
-  - `ng add @nrwl/node`
+```bash
+nx serve shell
+```
 
-There are also many [community plugins](https://nx.dev/community) you could add.
+This will build `shared-components` and will run three dev servers (app1, app2, and shell) and wire them up using module federation.
 
-## Generate an application
+### Building the application
 
-Run `ng g @nrwl/angular:app my-app` to generate an application.
+```bash
+nx build shell
+```
 
-> You can use any of the plugins above to generate applications as well.
+This will run 4 build tasks:
 
-When using Nx, you can create multiple applications and libraries in the same workspace.
+- `nx build shared-components`
+- `nx build app1`, `nx build app2`
+- `nx build shell`
 
-## Generate a library
+Note that `app1` and `app2` can be built in parallel, but they have to wait for `shared-components` to be built because their build processes will read the `dist` output of `shared-components`.
 
-Run `ng g @nrwl/angular:lib my-lib` to generate a library.
+You can also serve `shell` with only subset of the apps, as follows:
 
-> You can also use any of the plugins above to generate libraries as well.
+```bash
+nx serve shell --apps=app1
+```
 
-Libraries are shareable across libraries and applications. They can be imported from `@nx-module-federation/mylib`.
+`app2` will be retrieved from cache, so it will be available in the app, but won't be changeable. This can drastically speed up the serve time, and how long it takes to see your edits on the screen.
 
-## Development server
+### Testing the application and the libraries
 
-Run `ng serve my-app` for a dev server. Navigate to http://localhost:4200/. The app will automatically reload if you change any of the source files.
+There is no `dependsOn` set up for the test target, so running `nx test shell` will only run the tests of the `shell` project itself.
 
-## Code scaffolding
+If you want to test `app1-main`, run `nx test app1-main`.
 
-Run `ng g component my-component --project=my-app` to generate a new component.
+If you want to test everything, run `nx run-many --target=test --all`.
 
-## Build
+## Buildable shared-components
 
-Run `ng build my-app` to build the project. The build artifacts will be stored in the `dist/` directory. Use the `--prod` flag for a production build.
+As mentioned above, there are two ways to split a single build into multiple units: using module federation (vertical) and using buildable libraries (horizontal).
 
-## Running unit tests
+In our experience, making most libraries buildable can speed up the average build time on CI, but slows down the worst-case time and has a lot of negative implications on the local dev experience. Also, making libraries buildable can only improve the compilation time--it doesn't affect linking. Since linking often amounts to 40-50% of the total time, you have to use module federation to reduce your build time by 3+ times.
 
-Run `ng test my-app` to execute the unit tests via [Jest](https://jestjs.io).
+Having said that, it can be beneficial to make some libraries at the bottom of the dependency graph buildable (e.g., components). Such libraries are often big and slow to compile, and they aren't changed while developing the app itself. They are usually developed separately using something like Storybook (so the impact on the local DX is small). This repo illustrates this by making `shared-components` buildable.
 
-Run `nx affected:test` to execute the unit tests affected by a change.
+Without Nx Cloud's distributed tasks execution, making buildable libraries work in CI is very hard. You need to build things in order, move files between agents etc. Thankfully Nx Cloud does it automatically. It will build `shared-components` library first and then, when agents build `app1` and `app2`, it will make sure that the result of building `shared-components` is fetched and placed in the right `dist` folder.
 
-## Running end-to-end tests
+## CI setup
 
-Run `ng e2e my-app` to execute the end-to-end tests via [Cypress](https://www.cypress.io).
+This is the CI setup using GitHub actions.
 
-Run `nx affected:e2e` to execute the end-to-end tests affected by a change.
+```yaml
+jobs:
+  main:
+    name: Nx Cloud - Main Job
+    uses: nrwl/ci/.github/workflows/nx-cloud-main.yml@v0.1.1
+    with:
+      parallel-commands: |
+        npx nx-cloud record npx nx workspace-lint
+        npx nx-cloud record npx nx format:check
+      parallel-commands-on-agents: |
+        npx nx affected --target=lint --parallel=3
+        npx nx affected --target=test --parallel=3 --ci --code-coverage
+        npx nx affected --target=build --parallel=3
 
-## Understand your workspace
+  agents:
+    name: Nx Cloud - Agents
+    uses: nrwl/ci/.github/workflows/nx-cloud-agents.yml@v0.1
+    with:
+      number-of-agents: 3
+```
 
-Run `nx graph` to see a diagram of the dependencies of your projects.
+This setup will allocate 3 agents that will build/test/lint all the projects in a distributed fashion, in the right order, and in parallel.
 
-## Further help
+Once they are done, they will post the following comment:
 
-Visit the [Nx Documentation](https://nx.dev/angular) to learn more.
+![comment](./readme-assets/github.png)
 
-## ☁ Nx Cloud
+If you click on the links, you will the logs:
 
-### Distributed Computation Caching & Distributed Task Execution
+![nx-cloud](./readme-assets/nx-cloud.png)
 
-<p style="text-align: center;"><img src="https://raw.githubusercontent.com/nrwl/nx/master/images/nx-cloud-card.png"></p>
+## Distribution and Caching
 
-Nx Cloud pairs with Nx in order to enable you to build and test code more rapidly, by up to 10 times. Even teams that are new to Nx can connect to Nx Cloud and start saving time instantly.
+How does CI work in this setup?
 
-Teams using Nx gain the advantage of building full-stack applications with their preferred framework alongside Nx’s advanced code generation and project dependency graph, plus a unified experience for both frontend and backend developers.
+One of the agents will start building `shared-components`. While this is happening, other agents cannot start building `app1` and `app2`, so they will start running tests and lint checks. When `shared-components` is built, agents will build `app1` and `app2` in parallel. Note, all of this happens without your having to do anything. Nx Cloud will move the right dist files between agents, so the experiene is the same as if you ran it on a single agent, just much faster.
 
-Visit [Nx Cloud](https://nx.app/) to learn more.
+If your only changes `app2`, then `shared-components` and `app1` won't be built at all. They will be retrieved from cache.
+
+## Worst case time vs average case time
+
+If you split your application into multiple apps/slices using module federation, and if you use Nx Cloud, you could drastically reduce your build time.
+
+In the worst case scenario, where you change everything, the build time will be reduced to the slowest app/slice. Note the total computation will increase, but since it will run on multiple agents, the clock time will go down.
+
+In the average case scenario, where you only change one slice of the app, the build time will be reduced even more. Most of the slices are small, so the average build time can be a 10th of the original build time. And the total computation will decrease as well.
